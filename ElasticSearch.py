@@ -1,5 +1,6 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 """
+Developed with python2.7
 Elasticsearch Brain Surgeon
 Detects a split brain condition in an elastic search cluster, and acts on the
 violating host, if it does not agree with the majority of nodes within the
@@ -10,6 +11,7 @@ Depends on Pythoin Elasticsearch Library (install with pip install elasticsearch
 from elasticsearch import Elasticsearch
 from operator import itemgetter
 from subprocess import check_call, CalledProcessError
+from sys import exit
 import re
 
 class ElasticBrainSurgeon:
@@ -87,10 +89,18 @@ if __name__ == "__main__":
                         dest='harikari',
                         help='Tells the surgeon to restart the local elasticsearch')
     args = parser.parse_args()
-    bes = ElasticBrainSurgeon('localhost', 9200)
-    if not bes.checkMyMaster():
-        print bes.msg.replace('LEVEL','CRITICAL').replace('MESG','I have caused a split brain!')
-        if args.harikari:
-            bes.hariKari()
-    else:
-        print bes.msg.replace('LEVEL','OK').replace('MESG','Only one master.')
+    rc = 3
+    try:
+        bes = ElasticBrainSurgeon('localhost', 9200)
+        if not bes.checkMyMaster():
+            print bes.msg.replace('LEVEL','CRITICAL').replace('MESG','I have caused a split brain!')
+            rc = 2
+            if args.harikari:
+                bes.hariKari()
+        else:
+            print bes.msg.replace('LEVEL','OK').replace('MESG','Only one master.')
+            rc = 0
+    except Exception,e:
+        print e.error
+        rc = 2
+    exit(rc)
