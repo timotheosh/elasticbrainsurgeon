@@ -6,11 +6,12 @@ Detects a split brain condition in an elastic search cluster, and acts on the
 violating host, if it does not agree with the majority of nodes within the
 cluster as to who the master is.
 
-Depends on Pythoin Elasticsearch Library (install with pip install elasticsearch).
+Depends on Python Elasticsearch Library (install with pip install elasticsearch).
 """
 from elasticsearch import Elasticsearch
 from operator import itemgetter
 from subprocess import check_call, CalledProcessError
+from psutil import get_process_list
 from sys import exit
 import re
 
@@ -26,6 +27,8 @@ class ElasticBrainSurgeon:
             port = 9200
         myhost = '%s:%s' % (host, port)
         myEs = Elasticsearch(myhost)
+        self.initd = ['service','elasticsearch']
+        self.process = 'org.elasticsearch.bootstrap.Elasticsearch'
         self.nodes = myEs.nodes.stats()['nodes'] # List of nodes in this ES cluster.
         self.myMaster = myEs.cat.master() # Who I think the master is.
         self.masters = {}                 # Who other nodes think the master is.
@@ -40,19 +43,40 @@ class ElasticBrainSurgeon:
         sorted_masters.reverse()
         return sorted_masters[0]
 
-    def hariKari(self):
+    def __restart__(self):
+        print "This method does not do anything.... yet."
+
+    def checkProcess(self):
+        rtn = []
+        for x in get_process_list():
+            # If the process is java, and the commandline args included elastic search...
+            if x.name() == 'java' and self.process in x.cmdline():
+                # ...add pid to list
+                rtn.append(x.pid)
+        return rtn
+
+    def hariKari(self, restart=False):
         """
         Killing (and restarting) the local ElasticSearch instance.
         """
         try:
-            check_call("service stop elasticsearch")
+            attempts = 0
+            self.initd.append('stop')
+            check_call(self.initd)
         except CalledProcessError,exc:
             print exc.message
-        try:
-            check_call("service start elasticsearch")
-        except CalledProcessError,exc:
-            print exc.message
+
+        while len(self.checkProcess()) > 0:
+            if attempts == 3:
+                check_call(['/sbin/halt','-p'])
+            else:
+                attempts += 1
+                for pid in self.checkProcess():
+                    check_call(['kill','-9', "%s" % pid])
         print "Committing harikari!"
+        if restart:
+            self.__restart__()
+
 
     def checkMyMaster(self):
         """
@@ -81,21 +105,14 @@ class ElasticBrainSurgeon:
                 iamok = False
         return iamok
 
-if __name__ == "__main__":
-    from argparse import ArgumentParser
-    parser = ArgumentParser()
-    parser.add_argument('--harikari',
-                        action='store_true',
-                        dest='harikari',
-                        help='Tells the surgeon to restart the local elasticsearch')
-    args = parser.parse_args()
+def run(host, port, harikari):
     rc = 3
     try:
-        bes = ElasticBrainSurgeon('localhost', 9200)
+        bes = ElasticBrainSurgeon(host, port)
         if not bes.checkMyMaster():
             print bes.msg.replace('LEVEL','CRITICAL').replace('MESG','I have caused a split brain!')
             rc = 2
-            if args.harikari:
+            if harikari:
                 bes.hariKari()
         else:
             print bes.msg.replace('LEVEL','OK').replace('MESG','Only one master.')
@@ -104,3 +121,26 @@ if __name__ == "__main__":
         print e.error
         rc = 2
     exit(rc)
+
+def test(host, port):
+    bes = ElasticBrainSurgeon(host, port)
+    bes.hariKari()
+
+if __name__ == "__main__":
+    host = 'localhost'
+    port = 9200
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--harikari',
+                        action='store_true',
+                        dest='harikari',
+                        help='Tells the surgeon to restart the local elasticsearch')
+    parser.add_argument('-t',
+                        action='store_true',
+                        dest='test',
+                        help='Runs a harikari test on local elasticsearch')
+    args = parser.parse_args()
+    if args.test:
+        test(host, port)
+    else:
+        run(host, port, args.harikari)
